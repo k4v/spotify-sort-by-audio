@@ -27,42 +27,34 @@ impl SpotifyClient {
         }
     }
 
-    pub(crate) fn start_auth_listener(&mut self) {
-        if self.access_token.is_none() || self.is_token_expired() {
-            // Implementation for starting the authorization listener
-            let code_challenge = verification_util::build_code_challenge();
+    fn get_spotify_auth_url(&self) -> Result<http::Uri, http::Error> {
+        let code_challenge = verification_util::build_code_challenge();
 
-            let redirect_uri = format!(
-                "http://127.0.0.1:{}{}",
-                Self::AUTH_LISTENER_PORT,
-                Self::AUTH_CALLBACK_PATH
-            );
+        let redirect_uri = format!(
+            "http://127.0.0.1:{}{}",
+            Self::AUTH_LISTENER_PORT,
+            Self::AUTH_CALLBACK_PATH
+        );
 
-            let auth_url_path = format!(
-                "/authorize?client_id={}&response_type=code&scope={}&redirect_uri={}&code_challenge_method=S256&code_challenge={}",
-                self.client_id,
-                Self::SPOTIFY_API_SCOPES,
-                redirect_uri,
-                code_challenge
-            );
-            let error_message = format!(
-                "Failed to build Spotify authorization URL: \"{}\"",
-                auth_url_path
-            );
-            let spotify_auth_url = http::Uri::builder()
-                .scheme("https")
-                .authority("accounts.spotify.com")
-                .path_and_query(auth_url_path)
-                .build()
-                .expect(&error_message);
+        let auth_url_path = format!(
+            "/authorize?client_id={}&response_type=code&scope={}&redirect_uri={}&code_challenge_method=S256&code_challenge={}",
+            self.client_id,
+            Self::SPOTIFY_API_SCOPES,
+            redirect_uri,
+            code_challenge
+        );
 
-            println!("Authorize the application with Spotify by visiting the following URL: {}", spotify_auth_url);
-        }
+        http::Uri::builder()
+            .scheme("https")
+            .authority("accounts.spotify.com")
+            .path_and_query(auth_url_path)
+            .build()
     }
 
-    fn is_token_expired(&self) -> bool {
-        // Implementation for checking if the access token is expired
-        self.expiration_time <= 0
+    pub(crate) fn start_client_auth(&mut self) {
+
+        let spotify_auth_url = self.get_spotify_auth_url().expect("Failed to build Spotify auth URL");
+        println!("Authorize the application with Spotify by visiting the following URL: {}", spotify_auth_url);
     }
 
 }
