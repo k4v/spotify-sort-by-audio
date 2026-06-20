@@ -4,7 +4,7 @@ use base64::{Engine, prelude::BASE64_STANDARD};
 
 // Build a code verifier for client authorization flow with PKCE
 // and generate a code challenge from the code verifier value
-pub(crate) fn build_code_challenge() -> String {
+pub(crate) fn build_code_challenge() -> Result<(String, String), ()> {
     const CODE_VERIFIER_CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
     const CODE_VERIFIER_LENGTH: usize = 128;
 
@@ -18,9 +18,14 @@ pub(crate) fn build_code_challenge() -> String {
         .collect();
 
     // Create a SHA256 hash of the code verifier
-    let hash = Sha256::digest(code_verifier);
+    let hash = Sha256::digest(&code_verifier);
 
     // Encode the hash in base64url format
-    let code_challenge = BASE64_STANDARD.encode(&hash);
-    code_challenge
+    let code_challenge = BASE64_STANDARD.encode(hash);
+    if let Ok(code_verifier) = String::from_utf8(code_verifier) {
+        Ok((code_verifier, code_challenge))
+    } else {
+        Err(())
+        
+    }
 }
