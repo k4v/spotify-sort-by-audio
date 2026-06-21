@@ -1,0 +1,6 @@
+services:
+  spotifysortbyaudio:
+    image: spotifysortbyaudio
+    build:
+      context: .
+      dockerfile: ./Dockerfile

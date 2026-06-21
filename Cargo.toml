@@ -1,0 +1,15 @@
+[package]
+name = "spotify-sort-by-audio"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = { version = "0.8", features = ["query"] }
+base64 = { version = "0.22" }
+dotenv = { version = "0.15" }
+rand = { version = "0.10" }
+serde = { version = "1.0", features = ["derive"]  }
+sha2 = { version = "0.11" }
+tokio = { version = "1.52", features = ["full"] }
+ureq = { version = "3.3", features = ["json"] }
+url = { version = "2.5" }
