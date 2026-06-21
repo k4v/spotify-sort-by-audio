@@ -60,8 +60,8 @@ impl Server {
             .route(Self::SPOTIFY_CALLBACK_PATH, get({
                 let spotify_client = Arc::clone(&self.spotify_client);
                 async move |auth_params: Query<SpotifyAuthCallbackParams>| {
-                    if let Err(_callback_err) = spotify_client.lock().await.handle_auth_callback(auth_params) {
-                        println!("Error handling user access callback");
+                    if let Err(callback_err) = spotify_client.lock().await.handle_auth_callback(auth_params) {
+                        println!("Error handling user access callback: {}", callback_err);
                     }
                 }
             }))

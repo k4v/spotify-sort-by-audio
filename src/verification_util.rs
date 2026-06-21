@@ -1,6 +1,6 @@
 use rand::prelude::*;
 use sha2::{Digest, Sha256};
-use base64::{Engine, prelude::BASE64_STANDARD};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 
 // Build a code verifier for client authorization flow with PKCE
 // and generate a code challenge from the code verifier value
@@ -13,7 +13,7 @@ pub(crate) fn build_code_challenge() -> Result<(String, String), ()> {
     let code_verifier: Vec<u8> = (0..CODE_VERIFIER_LENGTH)
         .map(|_| {
             let idx = rng.random_range(0..CODE_VERIFIER_CHARSET.len());
-            CODE_VERIFIER_CHARSET[idx] as u8
+            CODE_VERIFIER_CHARSET[idx]
         })
         .collect();
 
@@ -21,7 +21,7 @@ pub(crate) fn build_code_challenge() -> Result<(String, String), ()> {
     let hash = Sha256::digest(&code_verifier);
 
     // Encode the hash in base64url format
-    let code_challenge = BASE64_STANDARD.encode(hash);
+    let code_challenge = URL_SAFE_NO_PAD.encode(hash);
     if let Ok(code_verifier) = String::from_utf8(code_verifier) {
         Ok((code_verifier, code_challenge))
     } else {
