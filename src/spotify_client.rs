@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::time::{Duration, SystemTime};
+
 use axum::extract::Query;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -35,7 +37,7 @@ struct CachedAccessToken {
     code_verifier: Option<String>,
     access_token: Option<String>,
     refresh_token: Option<String>,
-    expiration_time: u64,
+    expires_at: SystemTime,
 }
 
 #[derive(Clone)]
@@ -60,7 +62,7 @@ impl SpotifyClient {
         Self {
             client_id,
             client_secret,
-            cached_access_token: CachedAccessToken { code_verifier: None, access_token: None, refresh_token: None, expiration_time: 0 },
+            cached_access_token: CachedAccessToken { code_verifier: None, access_token: None, refresh_token: None, expires_at: SystemTime::UNIX_EPOCH },
             server_redirect_uri: server_redirect_uri.to_string(),
         }
     }
@@ -73,7 +75,7 @@ impl SpotifyClient {
     }
 
     fn reset_spotify_access_token(&mut self) {
-        self.cached_access_token = CachedAccessToken { code_verifier: None, access_token: None, refresh_token: None, expiration_time: 0 };
+        self.cached_access_token = CachedAccessToken { code_verifier: None, access_token: None, refresh_token: None, expires_at: SystemTime::UNIX_EPOCH };
     }
 
     fn get_spotify_auth_url(&self) -> Result<(String, String), String> {
@@ -113,7 +115,7 @@ impl SpotifyClient {
 
     pub(crate) fn handle_auth_callback(&mut self, auth_params: Query<SpotifyAuthCallbackParams>) -> Result<(), String> {
         // Ensure we have a code verifier cached, before comparing against client token
-        // TODO: Abort callback flow instead?
+        // TODO (*): Abort callback flow instead?
         if self.cached_access_token.code_verifier.is_none() {
             self.start_client_auth();
         }
@@ -132,9 +134,11 @@ impl SpotifyClient {
                     .send_form(request_form)
                     .map(|mut response| {
                         if let Ok(access_token) = response.body_mut().read_json::<SpotifyAccessTokenResponseBody>() {
-                            println!("Received a Spotify access token expiring in {} seconds", access_token.expires_in);
                             self.cached_access_token.access_token = Some(access_token.access_token);
                             self.cached_access_token.refresh_token = Some(access_token.refresh_token);
+                            // TODO (***): Implement background refresh thread
+                            self.cached_access_token.expires_at = SystemTime::now() + Duration::from_secs(access_token.expires_in - 60);
+                            println!("Received a Spotify access token expiring in {} seconds", access_token.expires_in);
                         }
                     })
                     .map_err(|error| format!("Error processing access token response: {}", error))
