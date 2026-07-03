@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::time::{Duration, SystemTime};
+use std::{sync::{Arc, Mutex}, time::{Duration, SystemTime}};
 
 use axum::extract::Query;
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,7 @@ pub(crate) struct SpotifyAuthCallbackParams {
     state: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Serialize)]
 struct SpotifyAccessTokenRequestBody {
     grant_type: String,
     code: String,
@@ -23,7 +23,7 @@ struct SpotifyAccessTokenRequestBody {
     code_verifier: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct SpotifyAccessTokenResponseBody {
     access_token: String,
     token_type: String,
@@ -32,7 +32,6 @@ struct SpotifyAccessTokenResponseBody {
     refresh_token: String,
 }
 
-#[derive(Clone)]
 struct CachedAccessToken {
     code_verifier: Option<String>,
     access_token: Option<String>,
@@ -40,11 +39,10 @@ struct CachedAccessToken {
     expires_at: SystemTime,
 }
 
-#[derive(Clone)]
 pub(crate) struct SpotifyClient {
     client_id: String,
     client_secret: String,
-    cached_access_token: CachedAccessToken,
+    cached_access_token: Arc<Mutex<CachedAccessToken>>,
     server_redirect_uri: String,
 }
 
@@ -62,9 +60,13 @@ impl SpotifyClient {
         Self {
             client_id,
             client_secret,
-            cached_access_token: CachedAccessToken { code_verifier: None, access_token: None, refresh_token: None, expires_at: SystemTime::UNIX_EPOCH },
+            cached_access_token: Arc::new(Mutex::new(CachedAccessToken { code_verifier: None, access_token: None, refresh_token: None, expires_at: SystemTime::UNIX_EPOCH })),
             server_redirect_uri: server_redirect_uri.to_string(),
         }
+    }
+
+    pub(crate) fn start_refresh_thread(&mut self) {
+        // TODO (***): Implement background refresh thread
     }
 
     fn load_config_from_env() -> (String, String) {
@@ -75,7 +77,8 @@ impl SpotifyClient {
     }
 
     fn reset_spotify_access_token(&mut self) {
-        self.cached_access_token = CachedAccessToken { code_verifier: None, access_token: None, refresh_token: None, expires_at: SystemTime::UNIX_EPOCH };
+        let mut guard = self.cached_access_token.lock().unwrap();
+        *guard = CachedAccessToken { code_verifier: None, access_token: None, refresh_token: None, expires_at: SystemTime::UNIX_EPOCH };
     }
 
     fn get_spotify_auth_url(&self) -> Result<(String, String), String> {
@@ -108,21 +111,23 @@ impl SpotifyClient {
         self.reset_spotify_access_token();
 
         let (spotify_auth_url, code_verifier) = self.get_spotify_auth_url().unwrap_or_else(|_| panic!("Failed to generate Spotify authorization URL"));
-        self.cached_access_token.code_verifier = Some(code_verifier);
+        self.cached_access_token.lock().unwrap().code_verifier = Some(code_verifier);
 
         println!("Authorize with Spotify: {}", spotify_auth_url);
     }
 
     pub(crate) fn handle_auth_callback(&mut self, auth_params: Query<SpotifyAuthCallbackParams>) -> Result<(), String> {
+        // This is a long guarded section, including waiting for an HTTP response (since ureq::post is blocking)
+        let cached_token_guard = self.cached_access_token.lock().unwrap();
         // Ensure we have a code verifier cached, before comparing against client token
-        // TODO (*): Abort callback flow instead?
-        if self.cached_access_token.code_verifier.is_none() {
-            self.start_client_auth();
+        if cached_token_guard.code_verifier.is_none() {
+            return Err("No code verifier cached, restarting client auth flow".to_string());
         }
 
         match self.get_spotify_token_url() {
             Ok(token_url) => {
-                let code_verifier = self.cached_access_token.code_verifier.as_deref().unwrap_or("");
+                // Clone the code_verifier out of the mutex so it lives long enough
+                let code_verifier = cached_token_guard.code_verifier.as_ref().ok_or("Code verifier not found in cached access token".to_string())?;
                 let request_form = [
                     ("grant_type", "authorization_code"),
                     ("code", &auth_params.code),
@@ -134,10 +139,13 @@ impl SpotifyClient {
                     .send_form(request_form)
                     .map(|mut response| {
                         if let Ok(access_token) = response.body_mut().read_json::<SpotifyAccessTokenResponseBody>() {
-                            self.cached_access_token.access_token = Some(access_token.access_token);
-                            self.cached_access_token.refresh_token = Some(access_token.refresh_token);
-                            // TODO (***): Implement background refresh thread
-                            self.cached_access_token.expires_at = SystemTime::now() + Duration::from_secs(access_token.expires_in - 60);
+                            let mut guard = self.cached_access_token.lock().unwrap();
+                            *guard = CachedAccessToken {
+                                code_verifier: Some(code_verifier.to_string()),
+                                access_token: Some(access_token.access_token.clone()),
+                                refresh_token: Some(access_token.refresh_token.clone()),
+                                expires_at: SystemTime::now() + Duration::from_secs(access_token.expires_in - 60),
+                            };
                             println!("Received a Spotify access token expiring in {} seconds", access_token.expires_in);
                         }
                     })

@@ -25,12 +25,9 @@ impl Server {
 
     pub(crate) async fn new(load_env_file_config: bool) -> Self {
         let server_config = Self::load_config_from_env(load_env_file_config);
-
         let redirect_uri = format!("http://127.0.0.1:{}{}", server_config.server_port, Self::SPOTIFY_CALLBACK_PATH);
-        let spotify_client = SpotifyClient::new(&redirect_uri);
-
         Self {
-            spotify_client: Arc::new(Mutex::new(spotify_client)),
+            spotify_client: Arc::new(Mutex::new(SpotifyClient::new(&redirect_uri))),
             server_config
         }
     }
@@ -45,15 +42,16 @@ impl Server {
         ServerConfig { server_port }
     }
 
-    pub(crate) async fn run(&mut self) {
+    pub(crate) async fn run(&self) {
         self.spotify_client.lock().await.start_client_auth();
 
         let listener = TcpListener::bind(format!("127.0.0.1:{}", self.server_config.server_port)).await.expect("Failed to bind to address");
         let router = self.get_configured_router();
+        // Nothing to do with the result of axum::serve, as it will run indefinitely until the server is stopped
         axum::serve(listener, router).await.expect("Failed to start server");
     }
 
-    fn get_configured_router(&mut self) -> Router {
+    fn get_configured_router(&self) -> Router {
         // Define required routes and REST handlers for the server
         let router: Router = Router::new()
             // Route to handle Spotify authorization callback after user login
@@ -63,6 +61,9 @@ impl Server {
                     // TODO (**): Implement custom Error types
                     if let Err(callback_err) = spotify_client.lock().await.handle_auth_callback(auth_params) {
                         println!("Error handling user access callback: {}", callback_err);
+                        if callback_err.contains("No code verifier cached") {
+                            spotify_client.lock().await.start_client_auth();
+                        }
                     }
                 }
             }))

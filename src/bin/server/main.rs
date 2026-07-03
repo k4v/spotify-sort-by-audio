@@ -4,7 +4,7 @@ mod verification_util;
 
 #[tokio::main]
 async fn main() {
-    let mut server = server::Server::new(true).await;
+    let server = server::Server::new(true).await;
     server.run().await;
 
 }
