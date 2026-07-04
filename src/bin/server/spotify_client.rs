@@ -3,24 +3,20 @@
 use std::{sync::{Arc, Mutex, mpsc::{self, RecvTimeoutError}}, thread::{self, JoinHandle}, time::{Duration, SystemTime}};
 
 use axum::extract::Query;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use url::Url;
 
 use crate::verification_util;
+
+struct ClientConfig {
+    client_id: String,
+    client_secret: Option<String>,  // Only required for server-to-server requests, not needed for PKCE flow
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct SpotifyAuthCallbackParams {
     code: String,
     state: Option<String>,
-}
-
-#[derive(Serialize)]
-struct SpotifyAccessTokenRequestBody {
-    grant_type: String,
-    code: String,
-    redirect_uri: String,
-    client_id: String,
-    code_verifier: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,7 +37,6 @@ struct CachedAccessToken {
 
 pub(crate) struct SpotifyClient {
     client_id: String,
-    client_secret: String,
     cached_access_token: Arc<Mutex<CachedAccessToken>>,
     server_redirect_uri: String,
     shutdown_tx: mpsc::Sender<()>,
@@ -63,7 +58,7 @@ impl SpotifyClient {
 
     pub(crate) fn new(server_redirect_uri: &str) -> Self {
 
-        let (client_id, client_secret) = Self::load_config_from_env();
+        let ClientConfig { client_id, client_secret: _ } = Self::load_config_from_env();
         let cached_access_token = Arc::new(Mutex::new(CachedAccessToken { code_verifier: None, access_token: None, refresh_token: None, expires_at: SystemTime::UNIX_EPOCH }));
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>();
 
@@ -71,7 +66,6 @@ impl SpotifyClient {
 
         Self {
             client_id,
-            client_secret,
             cached_access_token,
             server_redirect_uri: server_redirect_uri.to_string(),
             shutdown_tx,
@@ -128,11 +122,11 @@ impl SpotifyClient {
         })
     }
 
-    fn load_config_from_env() -> (String, String) {
+    fn load_config_from_env() -> ClientConfig {
         let client_id = std::env::var("SPOTIFY_CLIENT_ID").expect("SPOTIFY_CLIENT_ID must be set");
-        let client_secret = std::env::var("SPOTIFY_CLIENT_SECRET").expect("SPOTIFY_CLIENT_SECRET must be set");
+        let client_secret = std::env::var("SPOTIFY_CLIENT_SECRET").ok();
 
-        (client_id, client_secret)
+        ClientConfig { client_id, client_secret }
     }
 
     fn reset_spotify_access_token(&mut self) {
