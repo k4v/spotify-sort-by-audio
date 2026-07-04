@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{Router, extract::Query, routing::get};
 use tokio::{net::TcpListener, sync::Mutex};
 
-use crate::spotify_client::{SpotifyAuthCallbackParams, SpotifyClient};
+use crate::{error, spotify_client::{SpotifyAuthCallbackParams, SpotifyClient}};
 
 struct ServerConfig {
     server_port: u16,
@@ -57,13 +57,10 @@ impl Server {
             .route(Self::SPOTIFY_CALLBACK_PATH, get({
                 let spotify_client = Arc::clone(&self.spotify_client);
                 async move |auth_params: Query<SpotifyAuthCallbackParams>| {
-                    // TODO (**): Implement custom Error types
-                    if let Err(callback_err) = spotify_client.lock().await.handle_auth_callback(auth_params) {
-                        println!("Error handling user access callback: {}", callback_err);
-                        if callback_err.contains("No code verifier cached") {
+                    if let Err(callback_err) = spotify_client.lock().await.handle_auth_callback(auth_params)
+                        && matches!(callback_err, error::ServerError::TokenError(_)) {
                             spotify_client.lock().await.start_client_auth();
                         }
-                    }
                 }
             }))
             // Route to list playlists
