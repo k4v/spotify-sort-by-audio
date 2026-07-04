@@ -3,24 +3,20 @@
 use std::{sync::{Arc, Mutex, mpsc::{self, RecvTimeoutError}}, thread::{self, JoinHandle}, time::{Duration, SystemTime}};
 
 use axum::extract::Query;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use url::Url;
 
-use crate::verification_util;
+use crate::{error::ServerError, verification_util};
+
+struct ClientConfig {
+    client_id: String,
+    client_secret: Option<String>,  // Only required for server-to-server requests, not needed for PKCE flow
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct SpotifyAuthCallbackParams {
     code: String,
     state: Option<String>,
-}
-
-#[derive(Serialize)]
-struct SpotifyAccessTokenRequestBody {
-    grant_type: String,
-    code: String,
-    redirect_uri: String,
-    client_id: String,
-    code_verifier: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,7 +37,6 @@ struct CachedAccessToken {
 
 pub(crate) struct SpotifyClient {
     client_id: String,
-    client_secret: String,
     cached_access_token: Arc<Mutex<CachedAccessToken>>,
     server_redirect_uri: String,
     shutdown_tx: mpsc::Sender<()>,
@@ -63,7 +58,8 @@ impl SpotifyClient {
 
     pub(crate) fn new(server_redirect_uri: &str) -> Self {
 
-        let (client_id, client_secret) = Self::load_config_from_env();
+        // Don't allow the server to start if required client configuration is missing
+        let ClientConfig { client_id, client_secret: _ } = Self::load_config_from_env().expect("Failed to load initial client configuration");
         let cached_access_token = Arc::new(Mutex::new(CachedAccessToken { code_verifier: None, access_token: None, refresh_token: None, expires_at: SystemTime::UNIX_EPOCH }));
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>();
 
@@ -71,12 +67,18 @@ impl SpotifyClient {
 
         Self {
             client_id,
-            client_secret,
             cached_access_token,
             server_redirect_uri: server_redirect_uri.to_string(),
             shutdown_tx,
             refresh_thread: Some(refresh_thread),
         }
+    }
+
+    fn load_config_from_env() -> Result<ClientConfig, ServerError> {
+        let client_id = std::env::var("SPOTIFY_CLIENT_ID").map_err(|env_err| ServerError::ConfigError(env_err.to_string()))?;
+        let client_secret = std::env::var("SPOTIFY_CLIENT_SECRET").ok();
+
+        Ok(ClientConfig { client_id, client_secret })
     }
 
     fn build_refresh_thread(access_token: Arc<Mutex<CachedAccessToken>>, client_id: String, shutdown_rx: mpsc::Receiver<()>) -> JoinHandle<()> {
@@ -103,8 +105,8 @@ impl SpotifyClient {
                             ("client_id", &client_id),
                         ];
                         let token_refresh_url = Self::get_spotify_token_url();
-                        if token_refresh_url.is_err() {
-                            println!("Error building Spotify token refresh URL: {}", token_refresh_url.err().unwrap());
+                        if let Err(error) = token_refresh_url {
+                            println!("Error building Spotify token refresh URL: {}", error);
                             continue;
                         }
                         let _ = ureq::post(token_refresh_url.unwrap())
@@ -128,41 +130,35 @@ impl SpotifyClient {
         })
     }
 
-    fn load_config_from_env() -> (String, String) {
-        let client_id = std::env::var("SPOTIFY_CLIENT_ID").expect("SPOTIFY_CLIENT_ID must be set");
-        let client_secret = std::env::var("SPOTIFY_CLIENT_SECRET").expect("SPOTIFY_CLIENT_SECRET must be set");
-
-        (client_id, client_secret)
-    }
-
     fn reset_spotify_access_token(&mut self) {
         let mut guard = self.cached_access_token.lock().unwrap();
         *guard = CachedAccessToken { code_verifier: None, access_token: None, refresh_token: None, expires_at: SystemTime::UNIX_EPOCH };
     }
 
-    fn get_spotify_auth_url(&self) -> Result<(String, String), String> {
-        if let Ok((code_verifier, code_challenge)) = verification_util::build_code_challenge() {
-            Url::parse(&format!("https://{}{}", Self::SPOTIFY_AUTH_BASE_URL, Self::SPOTIFY_USER_AUTH_ENDPOINT))
-                .map(|mut auth_url| {
-                    auth_url.query_pairs_mut()
-                        .append_pair("client_id", &self.client_id)
-                        .append_pair("response_type", "code")
-                        .append_pair("redirect_uri", &self.server_redirect_uri)
-                        .append_pair("scope", Self::SPOTIFY_API_SCOPES)
-                        .append_pair("code_challenge_method", "S256")
-                        .append_pair("code_challenge", &code_challenge);
-                    (auth_url.to_string(), code_verifier)
-                })
-                .map_err(|_| "Unable to build authorization URL".to_string())
-        } else {
-            Err("Error building code challenge".to_string())
+    fn get_spotify_auth_url(&self) -> Result<(String, String), ServerError> {
+        match verification_util::build_code_challenge() {
+            Ok((code_verifier, code_challenge)) => {
+                Url::parse(&format!("https://{}{}", Self::SPOTIFY_AUTH_BASE_URL, Self::SPOTIFY_USER_AUTH_ENDPOINT))
+                    .map(|mut auth_url| {
+                        auth_url.query_pairs_mut()
+                            .append_pair("client_id", &self.client_id)
+                            .append_pair("response_type", "code")
+                            .append_pair("redirect_uri", &self.server_redirect_uri)
+                            .append_pair("scope", Self::SPOTIFY_API_SCOPES)
+                            .append_pair("code_challenge_method", "S256")
+                            .append_pair("code_challenge", &code_challenge);
+                        (auth_url.to_string(), code_verifier)
+                    })
+                    .map_err(|parse_error| ServerError::ConfigError(parse_error.to_string()))
+            },
+            Err(error) => Err(error),
         }
     }
 
-    fn get_spotify_token_url() -> Result<String, String> {
+    fn get_spotify_token_url() -> Result<String, ServerError> {
         Url::parse(&format!("https://{}{}", Self::SPOTIFY_AUTH_BASE_URL, Self::SPOTIFY_ACCESS_TOKEN_ENDPOINT))
             .map(|access_token_url| access_token_url.to_string())
-            .map_err(|error| format!("Error building access token URL: {}", error))
+            .map_err(|parse_error| ServerError::ConfigError(parse_error.to_string()))
     }
 
     pub(crate) fn start_client_auth(&mut self) {
@@ -175,12 +171,12 @@ impl SpotifyClient {
         println!("Authorize with Spotify: {}", spotify_auth_url);
     }
 
-    pub(crate) fn handle_auth_callback(&mut self, auth_params: Query<SpotifyAuthCallbackParams>) -> Result<(), String> {
+    pub(crate) fn handle_auth_callback(&mut self, auth_params: Query<SpotifyAuthCallbackParams>) -> Result<(), ServerError> {
         match Self::get_spotify_token_url() {
             Ok(token_url) => {
                 // Clone the code_verifier out of the mutex so it lives long enough
                 let mut cached_token_guard = self.cached_access_token.lock().unwrap();
-                let code_verifier = cached_token_guard.code_verifier.clone().ok_or("Code verifier not found in cached access token".to_string())?.clone();
+                let code_verifier = cached_token_guard.code_verifier.clone().ok_or(ServerError::TokenError("Code verifier not found in cached access token".to_string()))?;
                 let request_form = [
                     ("grant_type", "authorization_code"),
                     ("code", &auth_params.code),
@@ -200,7 +196,7 @@ impl SpotifyClient {
                             println!("Received a Spotify access token expiring in {} seconds", access_token.expires_in);
                         }
                     })
-                    .map_err(|error| format!("Error processing access token response: {}", error))
+                    .map_err(|error| ServerError::AuthError(format!("Error processing access token response: {}", error)))
             },
             Err(error) => {
                 Err(error)

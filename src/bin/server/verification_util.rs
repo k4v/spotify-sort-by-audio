@@ -2,9 +2,11 @@ use rand::prelude::*;
 use sha2::{Digest, Sha256};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 
+use crate::error::ServerError;
+
 // Build a code verifier for client authorization flow with PKCE
 // and generate a code challenge from the code verifier value
-pub(crate) fn build_code_challenge() -> Result<(String, String), ()> {
+pub(crate) fn build_code_challenge() -> Result<(String, String), ServerError> {
     const CODE_VERIFIER_CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
     const CODE_VERIFIER_LENGTH: usize = 128;
 
@@ -25,7 +27,6 @@ pub(crate) fn build_code_challenge() -> Result<(String, String), ()> {
     if let Ok(code_verifier) = String::from_utf8(code_verifier) {
         Ok((code_verifier, code_challenge))
     } else {
-        Err(())
-        
+        Err(ServerError::InternalError("Error building code challenge".to_string()))
     }
 }
