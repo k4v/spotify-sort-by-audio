@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{Router, extract::Query, routing::get};
 use tokio::{net::TcpListener, sync::Mutex};
 
-use crate::{error, spotify_client::{SpotifyAuthCallbackParams, SpotifyClient}};
+use crate::{types::error, spotify_client::{SpotifyAuthCallbackParams, SpotifyClient}};
 
 struct ServerConfig {
     server_port: u16,
@@ -64,13 +64,21 @@ impl Server {
                 }
             }))
             // Route to list playlists
-            .route(Self::LIST_PLAYLISTS_PATH, get(Self::list_playlists)
+            .route(Self::LIST_PLAYLISTS_PATH, get({
+                let spotify_client = Arc::clone(&self.spotify_client);
+                async move || {
+                    match spotify_client.lock().await.list_playlists() {
+                        Ok(playlists) => {
+                            println!("Playlists: {:?}", playlists);
+                        },
+                        Err(list_playlists_err) => {
+                            eprintln!("Error occurred while listing playlists: {}", list_playlists_err);
+                        }
+                    }
+                }
+            })
         );
         router
-    }
-
-    async fn list_playlists() -> String {
-        "List of playlists".to_string()
     }
 
 }

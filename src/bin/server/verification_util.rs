@@ -2,7 +2,7 @@ use rand::prelude::*;
 use sha2::{Digest, Sha256};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 
-use crate::error::ServerError;
+use crate::types::error::ServerError;
 
 // Build a code verifier for client authorization flow with PKCE
 // and generate a code challenge from the code verifier value

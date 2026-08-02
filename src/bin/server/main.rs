@@ -1,4 +1,4 @@
-mod error;
+mod types;
 mod server;
 mod spotify_client;
 mod verification_util;
