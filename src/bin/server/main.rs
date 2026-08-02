@@ -1,6 +1,6 @@
-mod types;
 mod server;
 mod spotify_client;
+mod types;
 mod verification_util;
 
 #[tokio::main]
