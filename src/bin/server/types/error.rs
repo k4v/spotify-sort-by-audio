@@ -3,7 +3,7 @@
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
 /// Error types that the Server would need to return, for example, related to
-/// server configuration, authentication handling and Sopotify API interactions
+/// server configuration, authentication handling and Spotify API interactions
 pub(crate) enum ServerError {
     AuthError(String),
     ClientError(String),
